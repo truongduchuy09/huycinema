@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Huy Cinema</title>
+    <link rel="icon" type="image/png" href="logo.png">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
 </head>
@@ -37,12 +38,12 @@
         <h2 id="sectionTitle" class="text-xl font-semibold mb-6 border-l-4 border-red-500 pl-2">Phim Mới Cập Nhật</h2>
 
         <div id="movieGrid" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-6">
-            </div>
+        </div>
 
         <div id="pagination" class="flex justify-center gap-4 mt-12">
             <button id="prevBtn" onclick="changePage(-1)" class="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded disabled:opacity-30 disabled:cursor-not-allowed transition">Trang trước</button>
             <span id="pageCurrent" class="self-center font-medium bg-gray-800 px-4 py-2 rounded border border-gray-700">Trang 1 / 1</span>
-            <button id="nextBtn" onclick="changePage(1)" class="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded disabled:opacity-30 disabled:cursor-not-allowed transition">Trang sau</button>
+            <button id="nextBtn" onclick="changePage(1)" class="bg-gray-900 hover:bg-gray-700 px-4 py-2 rounded disabled:opacity-30 disabled:cursor-not-allowed transition">Trang sau</button>
         </div>
     </main>
 
@@ -51,20 +52,17 @@
         let IMG_BASE = "https://ophimimg.com/uploads/movies/"; 
         
         let currentPage = 1;
-        let totalPages = 1; // Khởi tạo biến lưu tổng số trang toàn cục
+        let totalPages = 1; 
         let hls = null;
 
-        // Chức năng quay về trang chủ gốc
         function goHome() {
             document.getElementById('searchInput').value = "";
             closePlayer();
             loadMovies(1);
         }
 
-        // 1. Lấy danh sách phim mới khi vừa vào trang hoặc chuyển trang
         async function loadMovies(page) {
             currentPage = page;
-            // Trạng thái tạm thời trong lúc đợi API phản hồi
             document.getElementById('pageCurrent').innerText = `Trang ${currentPage} / ...`;
             document.getElementById('sectionTitle').innerText = "Phim Mới Cập Nhật";
             document.getElementById('pagination').classList.remove('hidden');
@@ -77,18 +75,15 @@
                     IMG_BASE = data.pathImage;
                 }
 
-                // CẬP NHẬT: Tính toán tổng số trang trả về từ API hệ thống
                 if (data.pagination) {
                     totalPages = data.pagination.totalPages || Math.ceil((data.pagination.totalItems || 0) / (data.pagination.totalItemsPerPage || 1)) || 1;
                 }
                 
-                // Hiển thị số trang hiện tại trên tổng số trang
                 document.getElementById('pageCurrent').innerText = `Trang ${currentPage} / ${totalPages}`;
                 
                 renderMovies(data.items);
                 window.scrollTo({ top: 0, behavior: 'smooth' });
                 
-                // Tự động bật/tắt trạng thái các nút bấm chuyển trang thông minh
                 document.getElementById('prevBtn').disabled = (currentPage === 1);
                 document.getElementById('nextBtn').disabled = (currentPage >= totalPages);
             } catch (err) {
@@ -96,7 +91,6 @@
             }
         }
 
-        // 2. Tìm kiếm phim
         async function searchMovie() {
             const keyword = document.getElementById('searchInput').value.trim();
             if (!keyword) return;
@@ -118,7 +112,6 @@
             }
         }
 
-        // 3. Hiển thị danh sách phim ra màn hình
         function renderMovies(movies) {
             const grid = document.getElementById('movieGrid');
             grid.innerHTML = "";
@@ -149,7 +142,6 @@
             });
         }
 
-        // 4. Xem phim chi tiết và load tập phim
         async function watchMovie(slug) {
             try {
                 const res = await fetch(`${API_BASE}/phim/${slug}`);
@@ -190,7 +182,6 @@
             }
         }
 
-        // 5. Khởi chạy video stream m3u8
         function playVideo(url) {
             const video = document.getElementById('videoPlayer');
 
@@ -216,7 +207,6 @@
             }
         }
 
-        // 6. Đóng trình phát phim
         function closePlayer() {
             const video = document.getElementById('videoPlayer');
             video.pause();
@@ -224,15 +214,12 @@
             document.getElementById('playerSection').classList.add('hidden');
         }
 
-        // 7. Xử lý logic Phân trang nâng cao
         function changePage(step) {
             let targetPage = currentPage + step;
-            // Chặn không cho người dùng bấm lùi quá trang 1 hoặc tiến quá tổng số trang
             if (targetPage < 1 || targetPage > totalPages) return; 
             loadMovies(targetPage);
         }
 
-        // Khởi chạy khi tải xong trang ban đầu
         loadMovies(1);
     </script>
 </body>
