@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Huy Cinema</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+</head>
+<body class="bg-gray-900 text-white font-sans">
+
+    <header class="bg-gray-800 sticky top-0 z-50 p-4 shadow-lg">
+        <div class="container mx-auto flex flex-col sm:flex-row justify-between items-center gap-4">
+            <h1 class="text-2xl font-bold text-red-500 cursor-pointer select-none hover:opacity-80 transition" onclick="goHome()">Huy Cinema</h1>
+            <div class="flex w-full sm:w-auto gap-2">
+                <input type="text" id="searchInput" placeholder="Nhập tên phim cần tìm..." class="w-full sm:w-80 px-4 py-2 rounded bg-gray-700 border border-gray-600 focus:outline-none focus:border-red-500">
+                <button onclick="searchMovie()" class="bg-red-600 hover:bg-red-700 px-6 py-2 rounded font-medium transition">Tìm</button>
+            </div>
+        </div>
+    </header>
+
+    <main class="container mx-auto px-4 py-8">
+        <section id="playerSection" class="hidden mb-12 bg-gray-800 p-4 rounded-lg shadow-xl">
+            <div class="flex justify-between items-center mb-4">
+                <h2 id="playingTitle" class="text-xl font-bold text-yellow-400">Đang tải phim...</h2>
+                <button onclick="closePlayer()" class="text-gray-400 hover:text-white text-sm bg-gray-700 px-3 py-1 rounded">Đóng [X]</button>
+            </div>
+            <div class="aspect-video w-full max-w-4xl mx-auto bg-black rounded overflow-hidden">
+                <video id="videoPlayer" controls class="w-full h-full"></video>
+            </div>
+            <div class="mt-4">
+                <h3 class="font-semibold text-gray-300 mb-2">Chọn tập phim:</h3>
+                <div id="episodeList" class="flex flex-wrap gap-2"></div>
+            </div>
+        </section>
+
+        <h2 id="sectionTitle" class="text-xl font-semibold mb-6 border-l-4 border-red-500 pl-2">Phim Mới Cập Nhật</h2>
+
+        <div id="movieGrid" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-6">
+            </div>
+
+        <div id="pagination" class="flex justify-center gap-4 mt-12">
+            <button id="prevBtn" onclick="changePage(-1)" class="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded disabled:opacity-30 disabled:cursor-not-allowed transition">Trang trước</button>
+            <span id="pageCurrent" class="self-center font-medium bg-gray-800 px-4 py-2 rounded border border-gray-700">Trang 1 / 1</span>
+            <button id="nextBtn" onclick="changePage(1)" class="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded disabled:opacity-30 disabled:cursor-not-allowed transition">Trang sau</button>
+        </div>
+    </main>
+
+    <script>
+        const API_BASE = "https://ophim1.com";
+        let IMG_BASE = "https://ophimimg.com/uploads/movies/"; 
+        
+        let currentPage = 1;
+        let totalPages = 1; // Khởi tạo biến lưu tổng số trang toàn cục
+        let hls = null;
+
+        // Chức năng quay về trang chủ gốc
+        function goHome() {
+            document.getElementById('searchInput').value = "";
+            closePlayer();
+            loadMovies(1);
+        }
+
+        // 1. Lấy danh sách phim mới khi vừa vào trang hoặc chuyển trang
+        async function loadMovies(page) {
+            currentPage = page;
+            // Trạng thái tạm thời trong lúc đợi API phản hồi
+            document.getElementById('pageCurrent').innerText = `Trang ${currentPage} / ...`;
+            document.getElementById('sectionTitle').innerText = "Phim Mới Cập Nhật";
+            document.getElementById('pagination').classList.remove('hidden');
+
+            try {
+                const res = await fetch(`${API_BASE}/danh-sach/phim-moi-cap-nhat?page=${page}`);
+                const data = await res.json();
+                
+                if (data.pathImage) {
+                    IMG_BASE = data.pathImage;
+                }
+
+                // CẬP NHẬT: Tính toán tổng số trang trả về từ API hệ thống
+                if (data.pagination) {
+                    totalPages = data.pagination.totalPages || Math.ceil((data.pagination.totalItems || 0) / (data.pagination.totalItemsPerPage || 1)) || 1;
+                }
+                
+                // Hiển thị số trang hiện tại trên tổng số trang
+                document.getElementById('pageCurrent').innerText = `Trang ${currentPage} / ${totalPages}`;
+                
+                renderMovies(data.items);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+                
+                // Tự động bật/tắt trạng thái các nút bấm chuyển trang thông minh
+                document.getElementById('prevBtn').disabled = (currentPage === 1);
+                document.getElementById('nextBtn').disabled = (currentPage >= totalPages);
+            } catch (err) {
+                console.error("Lỗi lấy danh sách phim:", err);
+            }
+        }
+
+        // 2. Tìm kiếm phim
+        async function searchMovie() {
+            const keyword = document.getElementById('searchInput').value.trim();
+            if (!keyword) return;
+
+            document.getElementById('sectionTitle').innerText = `Kết quả tìm kiếm cho: "${keyword}"`;
+            document.getElementById('pagination').classList.add('hidden');
+
+            try {
+                const res = await fetch(`${API_BASE}/v1/api/tim-kiem?keyword=${keyword}&limit=10`);
+                const data = await res.json();
+                
+                if (data.data && data.data.pathImage) {
+                    IMG_BASE = data.data.pathImage;
+                }
+                
+                renderMovies(data.data.items);
+            } catch (err) {
+                console.error("Lỗi tìm kiếm:", err);
+            }
+        }
+
+        // 3. Hiển thị danh sách phim ra màn hình
+        function renderMovies(movies) {
+            const grid = document.getElementById('movieGrid');
+            grid.innerHTML = "";
+
+            if (!movies || movies.length === 0) {
+                grid.innerHTML = `<p class="col-span-full text-center text-gray-400">Không tìm thấy bộ phim nào.</p>`;
+                return;
+            }
+
+            movies.forEach(movie => {
+                const thumb = movie.thumb_url.startsWith('http') ? movie.thumb_url : `${IMG_BASE}${movie.thumb_url}`;
+                
+                const card = document.createElement('div');
+                card.className = "bg-gray-800 rounded-lg overflow-hidden shadow-md hover:scale-105 transition duration-300 cursor-pointer group";
+                card.onclick = () => watchMovie(movie.slug);
+
+                card.innerHTML = `
+                    <div class="relative aspect-[3/4] bg-gray-700">
+                        <img src="${thumb}" alt="${movie.name}" class="w-full h-full object-cover" loading="lazy" onerror="this.onerror=null; this.src='https://placehold.co/300x400/1f2937/ffffff?text=No+Image'">
+                        <span class="absolute top-2 left-2 bg-red-600 text-xs px-2 py-1 rounded font-bold">${movie.lang || 'Vietsub'}</span>
+                    </div>
+                    <div class="p-3">
+                        <h3 class="font-semibold text-sm line-clamp-1 group-hover:text-red-400 transition">${movie.name}</h3>
+                        <p class="text-xs text-gray-400 mt-1">${movie.origin_name || ''} (${movie.year || 'N/A'})</p>
+                    </div>
+                `;
+                grid.appendChild(card);
+            });
+        }
+
+        // 4. Xem phim chi tiết và load tập phim
+        async function watchMovie(slug) {
+            try {
+                const res = await fetch(`${API_BASE}/phim/${slug}`);
+                const data = await res.json();
+                
+                if (!data.status) return alert("Không tìm thấy thông tin phim này!");
+
+                const movie = data.movie;
+                const episodes = data.episodes[0]?.server_data || [];
+
+                const playerSection = document.getElementById('playerSection');
+                playerSection.classList.remove('hidden');
+                playerSection.scrollIntoView({ behavior: 'smooth' });
+
+                document.getElementById('playingTitle').innerText = `${movie.name} - ${movie.origin_name}`;
+
+                const epListContainer = document.getElementById('episodeList');
+                epListContainer.innerHTML = "";
+
+                if (episodes.length === 0) {
+                    epListContainer.innerHTML = "<p class='text-gray-400 text-sm'>Phim đang cập nhật tập...</p>";
+                    return;
+                }
+
+                episodes.forEach((ep, index) => {
+                    const btn = document.createElement('button');
+                    btn.className = "bg-gray-700 hover:bg-red-600 text-white px-3 py-1.5 text-sm rounded transition min-w-[50px]";
+                    btn.innerText = ep.name;
+                    btn.onclick = () => playVideo(ep.link_m3u8);
+                    
+                    epListContainer.appendChild(btn);
+
+                    if (index === 0) playVideo(ep.link_m3u8);
+                });
+
+            } catch (err) {
+                console.error("Lỗi lấy chi tiết phim:", err);
+            }
+        }
+
+        // 5. Khởi chạy video stream m3u8
+        function playVideo(url) {
+            const video = document.getElementById('videoPlayer');
+
+            if (hls) {
+                hls.destroy();
+            }
+
+            if (Hls.isSupported()) {
+                hls = new Hls();
+                hls.loadSource(url);
+                hls.attachMedia(video);
+                hls.on(Hls.Events.MANIFEST_PARSED, function() {
+                    video.play();
+                });
+            }
+            else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                video.src = url;
+                video.addEventListener('loadedmetadata', function() {
+                    video.play();
+                });
+            } else {
+                alert("Trình duyệt của bạn không hỗ trợ phát định dạng video này.");
+            }
+        }
+
+        // 6. Đóng trình phát phim
+        function closePlayer() {
+            const video = document.getElementById('videoPlayer');
+            video.pause();
+            if (hls) hls.destroy();
+            document.getElementById('playerSection').classList.add('hidden');
+        }
+
+        // 7. Xử lý logic Phân trang nâng cao
+        function changePage(step) {
+            let targetPage = currentPage + step;
+            // Chặn không cho người dùng bấm lùi quá trang 1 hoặc tiến quá tổng số trang
+            if (targetPage < 1 || targetPage > totalPages) return; 
+            loadMovies(targetPage);
+        }
+
+        // Khởi chạy khi tải xong trang ban đầu
+        loadMovies(1);
+    </script>
+</body>
+</html>
