@@ -7,6 +7,11 @@
     <link rel="icon" type="image/png" href="logo.png">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <style>
+        /* Tối ưu thanh cuộn ngang cho mục lịch sử nhìn cho đẹp */
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
 </head>
 <body class="bg-gray-900 text-white font-sans">
 
@@ -35,6 +40,15 @@
             </div>
         </section>
 
+        <section id="historySection" class="hidden mb-10">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-xl font-semibold border-l-4 border-blue-500 pl-2">Tiếp Tục Xem</h2>
+                <button onclick="clearHistory()" class="text-xs text-gray-400 hover:text-red-500 transition">[Xóa lịch sử]</button>
+            </div>
+            <div id="historyGrid" class="flex overflow-x-auto gap-4 pb-2 scrollbar-hide snap-x">
+                </div>
+        </section>
+
         <h2 id="sectionTitle" class="text-xl font-semibold mb-6 border-l-4 border-red-500 pl-2">Phim Mới Cập Nhật</h2>
 
         <div id="movieGrid" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-6">
@@ -54,6 +68,8 @@
         let currentPage = 1;
         let totalPages = 1; 
         let hls = null;
+        let currentPlaying = null; // Lưu trữ phim và tập đang xem hiện tại để tracking
+        let saveTimeout = null;
 
         function goHome() {
             document.getElementById('searchInput').value = "";
@@ -67,13 +83,18 @@
             document.getElementById('sectionTitle').innerText = "Phim Mới Cập Nhật";
             document.getElementById('pagination').classList.remove('hidden');
 
+            // Chỉ hiển thị mục lịch sử đã xem ở Trang 1 danh sách phim mới để đỡ rối mắt
+            if (page === 1) {
+                renderHistory();
+            } else {
+                document.getElementById('historySection').classList.add('hidden');
+            }
+
             try {
                 const res = await fetch(`${API_BASE}/danh-sach/phim-moi-cap-nhat?page=${page}`);
                 const data = await res.json();
                 
-                if (data.pathImage) {
-                    IMG_BASE = data.pathImage;
-                }
+                if (data.pathImage) IMG_BASE = data.pathImage;
 
                 if (data.pagination) {
                     totalPages = Math.ceil((data.pagination.totalItems || 0) / (data.pagination.totalItemsPerPage || 10)) || 1;
@@ -82,7 +103,7 @@
                 document.getElementById('pageCurrent').innerText = `Trang ${currentPage} / ${totalPages}`;
                 
                 if (data.items && data.items.length > 0) {
-                    renderMovies(data.items); 
+                    renderMovies(data.items);
                     enrichMovieData(data.items); 
                 } else {
                     renderMovies([]);
@@ -118,6 +139,7 @@
 
             document.getElementById('sectionTitle').innerText = `Kết quả tìm kiếm cho: "${keyword}"`;
             document.getElementById('pagination').classList.add('hidden');
+            document.getElementById('historySection').classList.add('hidden'); // Ẩn lịch sử khi tìm kiếm
 
             try {
                 const res = await fetch(`${API_BASE}/v1/api/tim-kiem?keyword=${keyword}&limit=12`);
@@ -128,7 +150,7 @@
                 
                 renderMovies(items);
                 if (items.length > 0) {
-                    enrichMovieData(items); 
+                    enrichMovieData(items);
                 }
             } catch (err) {
                 console.error("Lỗi tìm kiếm:", err);
@@ -145,14 +167,13 @@
             }
 
             movies.forEach(movie => {
-                // Xử lý link ảnh an toàn tuyệt đối
                 let rawThumb = movie.thumb_url || movie.poster_url || "";
                 let finalThumb = "";
 
                 if (rawThumb.startsWith('http://') || rawThumb.startsWith('https://')) {
                     finalThumb = rawThumb;
                 } else {
-                    let cleanThumb = rawThumb.replace(/^\/+/, ''); 
+                    let cleanThumb = rawThumb.replace(/^\/+/, '');
                     let base = IMG_BASE.endsWith('/') ? IMG_BASE : `${IMG_BASE}/`;
                     finalThumb = `${base}${cleanThumb}`;
                 }
@@ -181,9 +202,7 @@
                 card.innerHTML = `
                     <div class="relative aspect-[3/4] bg-gray-700">
                         <img src="${finalThumb}" alt="${movie.name}" class="w-full h-full object-cover" loading="lazy" onerror="this.onerror=null; this.src='https://placehold.co/300x400/1f2937/ffffff?text=No+Image'">
-                        
                         <span class="absolute top-2 left-2 bg-red-600 text-xs px-2 py-1 rounded font-bold shadow-md z-10">${episodeStatus}</span>
-                        
                         <span class="absolute top-2 right-2 bg-gray-900/80 text-xs px-2 py-1 rounded font-bold text-yellow-400 shadow-md z-10">${movie.lang || 'Vietsub'}</span>
                     </div>
                     <div class="p-3">
@@ -195,7 +214,7 @@
             });
         }
 
-        async function watchMovie(slug) {
+        async function watchMovie(slug, autoPlayEpName = null) {
             try {
                 const res = await fetch(`${API_BASE}/phim/${slug}`);
                 const data = await res.json();
@@ -219,24 +238,58 @@
                     return;
                 }
 
-                episodes.forEach((ep, index) => {
+                let targetEpisode = episodes[0];
+
+                episodes.forEach((ep) => {
                     const btn = document.createElement('button');
-                    btn.className = "bg-gray-700 hover:bg-red-600 text-white px-3 py-1.5 text-sm rounded transition min-w-[50px]";
+                    // Nếu click từ mục tiếp tục xem, sẽ highlight đúng tập đó lên
+                    const isTarget = autoPlayEpName ? (ep.name === autoPlayEpName) : false;
+                    
+                    btn.className = `${isTarget ? 'bg-red-600 font-bold' : 'bg-gray-700'} hover:bg-red-600 text-white px-3 py-1.5 text-sm rounded transition min-w-[50px] ep-btn`;
+                    btn.setAttribute('data-epname', ep.name);
                     btn.innerText = ep.name;
-                    btn.onclick = () => playVideo(ep.link_m3u8);
+                    
+                    btn.onclick = () => {
+                        // Reset màu các nút khác
+                        document.querySelectorAll('.ep-btn').forEach(b => b.classList.replace('bg-red-600', 'bg-gray-700'));
+                        btn.classList.replace('bg-gray-700', 'bg-red-600');
+                        playVideo(ep.link_m3u8, ep.name, movie);
+                    };
                     
                     epListContainer.appendChild(btn);
 
-                    if (index === 0) playVideo(ep.link_m3u8);
+                    if (isTarget) {
+                        targetEpisode = ep;
+                    }
                 });
+
+                // Chạy video tập mục tiêu
+                playVideo(targetEpisode.link_m3u8, targetEpisode.name, movie);
 
             } catch (err) {
                 console.error("Lỗi lấy chi tiết phim:", err);
             }
         }
 
-        function playVideo(url) {
+        function playVideo(url, epName, movieData) {
             const video = document.getElementById('videoPlayer');
+
+            // Set ngữ cảnh phim đang phát phục vụ việc ghi nhận lịch sử
+            currentPlaying = {
+                slug: movieData.slug,
+                name: movieData.name,
+                origin_name: movieData.origin_name,
+                thumb_url: movieData.thumb_url || movieData.poster_url || "",
+                epName: epName,
+                url: url
+            };
+
+            document.getElementById('playingTitle').innerText = `${movieData.name} - Tập ${epName}`;
+
+            // Tìm kiếm xem tập phim này từng xem dở ở giây thứ mấy
+            const history = getHistory();
+            const savedItem = history.find(h => h.slug === movieData.slug && h.epName === epName);
+            const savedTime = savedItem ? savedItem.position : 0;
 
             if (hls) {
                 hls.destroy();
@@ -247,24 +300,124 @@
                 hls.loadSource(url);
                 hls.attachMedia(video);
                 hls.on(Hls.Events.MANIFEST_PARSED, function() {
+                    // Nếu thời gian đã xem lớn hơn 3 giây thì tự động tua tiếp tục xem
+                    if (savedTime > 3) video.currentTime = savedTime;
                     video.play();
                 });
             }
             else if (video.canPlayType('application/vnd.apple.mpegurl')) {
                 video.src = url;
                 video.addEventListener('loadedmetadata', function() {
+                    if (savedTime > 3) video.currentTime = savedTime;
                     video.play();
-                });
+                }, { once: true });
             } else {
                 alert("Trình duyệt của bạn không hỗ trợ phát định dạng video này.");
             }
         }
 
+        // --- CÁC HÀM LẮP RÁP LOGIC LỊCH SỬ XEM PHIM (LOCALSTORAGE) ---
+        function getHistory() {
+            return JSON.parse(localStorage.getItem('huy_cinema_history')) || [];
+        }
+
+        function saveHistoryItem(movie, position, duration) {
+            if (!movie || duration === 0) return;
+            let history = getHistory();
+            
+            // Xóa phần tử cũ trùng khớp tập phim để đẩy lên đầu hàng đợi
+            history = history.filter(h => !(h.slug === movie.slug && h.epName === movie.epName));
+            
+            history.unshift({
+                slug: movie.slug,
+                name: movie.name,
+                origin_name: movie.origin_name,
+                thumb_url: movie.thumb_url,
+                epName: movie.epName,
+                url: movie.url,
+                position: position,
+                duration: duration,
+                timeText: formatTime(position),
+                updatedAt: Date.now()
+            });
+
+            // Giới hạn lưu tối đa 15 tập phim đã xem gần nhất tránh quá tải bộ nhớ trình duyệt
+            if (history.length > 15) history.pop();
+            localStorage.setItem('huy_cinema_history', JSON.stringify(history));
+        }
+
+        function renderHistory() {
+            const historySection = document.getElementById('historySection');
+            const historyGrid = document.getElementById('historyGrid');
+            const history = getHistory();
+
+            if (history.length === 0) {
+                historySection.classList.add('hidden');
+                return;
+            }
+
+            historySection.classList.remove('hidden');
+            historyGrid.innerHTML = "";
+
+            history.forEach(item => {
+                let rawThumb = item.thumb_url || "";
+                let finalThumb = "";
+                if (rawThumb.startsWith('http://') || rawThumb.startsWith('https://')) {
+                    finalThumb = rawThumb;
+                } else {
+                    let cleanThumb = rawThumb.replace(/^\/+/, '');
+                    let base = IMG_BASE.endsWith('/') ? IMG_BASE : `${IMG_BASE}/`;
+                    finalThumb = `${base}${cleanThumb}`;
+                }
+
+                // Tính toán % thời lượng đã xem cho thanh tiến trình
+                const progressPercent = (item.position / item.duration) * 100 || 0;
+
+                const card = document.createElement('div');
+                card.className = "bg-gray-800 rounded-lg overflow-hidden shadow-md hover:scale-105 transition duration-300 cursor-pointer group flex-shrink-0 w-36 md:w-44 snap-start";
+                card.onclick = () => watchMovie(item.slug, item.epName);
+
+                card.innerHTML = `
+                    <div class="relative aspect-[3/4] bg-gray-700">
+                        <img src="${finalThumb}" alt="${item.name}" class="w-full h-full object-cover" loading="lazy" onerror="this.onerror=null; this.src='https://placehold.co/300x400/1f2937/ffffff?text=No+Image'">
+                        <span class="absolute top-2 left-2 bg-blue-600 text-[10px] px-1.5 py-0.5 rounded font-bold shadow-md z-10">Tập ${item.epName}</span>
+                        
+                        <div class="absolute bottom-0 left-0 w-full h-1 bg-gray-600 z-10">
+                            <div class="bg-red-500 h-full transition-all duration-300" style="width: ${progressPercent}%"></div>
+                        </div>
+                    </div>
+                    <div class="p-2">
+                        <h3 class="font-semibold text-xs line-clamp-1 group-hover:text-red-400 transition">${item.name}</h3>
+                        <p class="text-[10px] text-gray-400 mt-0.5">Dừng ở: ${item.timeText || '00:00'}</p>
+                    </div>
+                `;
+                historyGrid.appendChild(card);
+            });
+        }
+
+        function clearHistory() {
+            if (confirm("Bạn có chắc chắn muốn xóa toàn bộ lịch sử đã xem không?")) {
+                localStorage.removeItem('huy_cinema_history');
+                renderHistory();
+            }
+        }
+
+        function formatTime(secs) {
+            let m = Math.floor(secs / 60);
+            let s = Math.floor(secs % 60);
+            return `${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
+        }
+
         function closePlayer() {
             const video = document.getElementById('videoPlayer');
+            if (currentPlaying && video.duration > 0) {
+                saveHistoryItem(currentPlaying, video.currentTime, video.duration);
+            }
             video.pause();
             if (hls) hls.destroy();
             document.getElementById('playerSection').classList.add('hidden');
+            currentPlaying = null;
+            if (currentPage === 1) renderHistory(); // Refresh lại danh sách lịch sử khi đóng trình phát
         }
 
         function changePage(step) {
@@ -273,6 +426,27 @@
             loadMovies(targetPage);
         }
 
+        // EVENT LISTENER: Lắng nghe trình phát để tự động cập nhật tiến trình vào localStorage (Throttled 3 giây)
+        const videoEl = document.getElementById('videoPlayer');
+        videoEl.addEventListener('timeupdate', () => {
+            if (!currentPlaying || videoEl.duration === 0) return;
+            
+            if (!saveTimeout) {
+                saveTimeout = setTimeout(() => {
+                    saveHistoryItem(currentPlaying, videoEl.currentTime, videoEl.duration);
+                    saveTimeout = null;
+                }, 3000); // Cứ mỗi 3 giây lưu tiến độ 1 lần tránh thắt nút cổ chai hiệu năng
+            }
+        });
+
+        // Tự động lưu thêm 1 lần khi người dùng bấm tạm dừng phim
+        videoEl.addEventListener('pause', () => {
+            if (currentPlaying && videoEl.duration > 0) {
+                saveHistoryItem(currentPlaying, videoEl.currentTime, videoEl.duration);
+            }
+        });
+
+        // Khởi động trang web tải dữ liệu trang 1
         loadMovies(1);
     </script>
 </body>
